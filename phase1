@@ -1,0 +1,65 @@
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+async def read_root():
+    return {"message": "Hello, AI Newsletter Generator!"}
+
+
+
+
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+DATABASE_URL = "sqlite+aiosqlite:///./newsletter.db"
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+SessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+Base = declarative_base()
+
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum
+from sqlalchemy.sql import func
+from database.db import Base
+
+class RawContent(Base):
+    __tablename__ = "newsletter_raw_content"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    url = Column(String, nullable=False)
+    summary = Column(Text)
+    published_date = Column(DateTime)
+    raw_html = Column(Text)
+    status = Column(String, default="RAW")  # RAW, PROCESSED
+
+class ProcessedContent(Base):
+    __tablename__ = "newsletter_processed_content"
+
+    id = Column(Integer, primary_key=True, index=True)
+    raw_id = Column(Integer)
+    formatted_content = Column(Text)
+    status = Column(String, default="PENDING_APPROVAL")  # PENDING_APPROVAL, APPROVED, REJECTED, SENT
+
+
+
+
+from fastapi import FastAPI
+from database.db import init_db
+
+app = FastAPI()
+
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
+
+@app.get("/")
+async def read_root():
+    return {"message": "Hello, AI Newsletter Generator!"}
