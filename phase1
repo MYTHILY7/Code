@@ -1,30 +1,5 @@
-from fastapi import FastAPI
-
-app = FastAPI()
-
-@app.get("/")
-async def read_root():
-    return {"message": "Hello, AI Newsletter Generator!"}
-
-
-
-
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-
-DATABASE_URL = "sqlite+aiosqlite:///./newsletter.db"
-
-engine = create_async_engine(DATABASE_URL, echo=True)
-SessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-Base = declarative_base()
-
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
-
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, JSON, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database.db import Base
 
@@ -34,32 +9,49 @@ class RawContent(Base):
     id = Column(Integer, primary_key=True, index=True)
     source = Column(String, nullable=False)
     title = Column(String, nullable=False)
-    url = Column(String, nullable=False)
+    url = Column(String, nullable=False, unique=True)
     summary = Column(Text)
-    published_date = Column(DateTime)
+    published_date = Column(DateTime, default=func.now())
     raw_html = Column(Text)
     status = Column(String, default="RAW")  # RAW, PROCESSED
+
+    # Relationship to ProcessedContent
+    processed = relationship("ProcessedContent", back_populates="raw_content", uselist=False)
+
 
 class ProcessedContent(Base):
     __tablename__ = "newsletter_processed_content"
 
     id = Column(Integer, primary_key=True, index=True)
-    raw_id = Column(Integer)
+    raw_id = Column(Integer, ForeignKey("newsletter_raw_content.id"))
     formatted_content = Column(Text)
     status = Column(String, default="PENDING_APPROVAL")  # PENDING_APPROVAL, APPROVED, REJECTED, SENT
 
+    # Relationship back to RawContent
+    raw_content = relationship("RawContent", back_populates="processed")
 
 
+class NewsletterIssueHistory(Base):
+    __tablename__ = "newsletter_issue_history"
 
-from fastapi import FastAPI
-from database.db import init_db
+    id = Column(Integer, primary_key=True, index=True)
+    date_sent = Column(DateTime, default=func.now())
+    content_ids = Column(JSON)  # Stores a list of processed content IDs
+    status = Column(String, default="SENT")  # e.g., SENT, FAILED
 
-app = FastAPI()
 
-@app.on_event("startup")
-async def on_startup():
-    await init_db()
+class Subscriber(Base):
+    __tablename__ = "subscribers"
 
-@app.get("/")
-async def read_root():
-    return {"message": "Hello, AI Newsletter Generator!"}
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False)
+    status = Column(String, default="ACTIVE")  # ACTIVE, UNSUBSCRIBED
+
+
+class Admin(Base):
+    __tablename__ = "admins"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False)
+    password_hash = Column(String, nullable=False)
