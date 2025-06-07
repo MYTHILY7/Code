@@ -1,57 +1,89 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, JSON, ForeignKey
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from database.db import Base
+from datetime import datetime
+from typing import Optional, List
+from pydantic import BaseModel, EmailStr
 
-class RawContent(Base):
-    __tablename__ = "newsletter_raw_content"
+# RawContent schemas
 
-    id = Column(Integer, primary_key=True, index=True)
-    source = Column(String, nullable=False)
-    title = Column(String, nullable=False)
-    url = Column(String, nullable=False, unique=True)
-    summary = Column(Text)
-    published_date = Column(DateTime, default=func.now())
-    raw_html = Column(Text)
-    status = Column(String, default="RAW")  # RAW, PROCESSED
+class RawContentBase(BaseModel):
+    source: str
+    title: str
+    url: str
+    summary: Optional[str]
+    published_date: Optional[datetime]
+    raw_html: Optional[str]
+    status: Optional[str] = "RAW"
 
-    # Relationship to ProcessedContent
-    processed = relationship("ProcessedContent", back_populates="raw_content", uselist=False)
+class RawContentCreate(RawContentBase):
+    pass
 
+class RawContentResponse(RawContentBase):
+    id: int
 
-class ProcessedContent(Base):
-    __tablename__ = "newsletter_processed_content"
-
-    id = Column(Integer, primary_key=True, index=True)
-    raw_id = Column(Integer, ForeignKey("newsletter_raw_content.id"))
-    formatted_content = Column(Text)
-    status = Column(String, default="PENDING_APPROVAL")  # PENDING_APPROVAL, APPROVED, REJECTED, SENT
-
-    # Relationship back to RawContent
-    raw_content = relationship("RawContent", back_populates="processed")
+    class Config:
+        orm_mode = True
 
 
-class NewsletterIssueHistory(Base):
-    __tablename__ = "newsletter_issue_history"
+# ProcessedContent schemas
 
-    id = Column(Integer, primary_key=True, index=True)
-    date_sent = Column(DateTime, default=func.now())
-    content_ids = Column(JSON)  # Stores a list of processed content IDs
-    status = Column(String, default="SENT")  # e.g., SENT, FAILED
+class ProcessedContentBase(BaseModel):
+    raw_id: int
+    formatted_content: Optional[str]
+    status: Optional[str] = "PENDING_APPROVAL"
+
+class ProcessedContentCreate(ProcessedContentBase):
+    pass
+
+class ProcessedContentResponse(ProcessedContentBase):
+    id: int
+
+    class Config:
+        orm_mode = True
 
 
-class Subscriber(Base):
-    __tablename__ = "subscribers"
+# NewsletterIssueHistory schemas
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, nullable=False)
-    status = Column(String, default="ACTIVE")  # ACTIVE, UNSUBSCRIBED
+class NewsletterIssueHistoryBase(BaseModel):
+    date_sent: Optional[datetime]
+    content_ids: Optional[List[int]]
+    status: Optional[str] = "SENT"
+
+class NewsletterIssueHistoryCreate(NewsletterIssueHistoryBase):
+    pass
+
+class NewsletterIssueHistoryResponse(NewsletterIssueHistoryBase):
+    id: int
+
+    class Config:
+        orm_mode = True
 
 
-class Admin(Base):
-    __tablename__ = "admins"
+# Subscriber schemas
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    email = Column(String, unique=True, nullable=False)
-    password_hash = Column(String, nullable=False)
+class SubscriberBase(BaseModel):
+    email: EmailStr
+    status: Optional[str] = "ACTIVE"
+
+class SubscriberCreate(SubscriberBase):
+    pass
+
+class SubscriberResponse(SubscriberBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+# Admin schemas
+
+class AdminBase(BaseModel):
+    name: str
+    email: EmailStr
+
+class AdminCreate(AdminBase):
+    password: str  # plain password on input
+
+class AdminResponse(AdminBase):
+    id: int
+
+    class Config:
+        orm_mode = True
