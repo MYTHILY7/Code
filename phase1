@@ -1,89 +1,112 @@
+sources:
+  - name: TechCrunch AI
+    url: "https://techcrunch.com/tag/ai/feed/"
+    type: rss
+
+  - name: MIT Technology Review AI
+    url: "https://www.technologyreview.com/topic/artificial-intelligence/"
+    type: html
+
+  - name: Towards Data Science
+    url: "https://towardsdatascience.com/tagged/ai"
+    type: html
+
+
+
+
+import yaml
+import feedparser
+import aiohttp
+from bs4 import BeautifulSoup
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, EmailStr
 
-# RawContent schemas
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
-class RawContentBase(BaseModel):
-    source: str
-    title: str
-    url: str
-    summary: Optional[str]
-    published_date: Optional[datetime]
-    raw_html: Optional[str]
-    status: Optional[str] = "RAW"
+from database.db import SessionLocal
+from models.models import RawContent
 
-class RawContentCreate(RawContentBase):
-    pass
-
-class RawContentResponse(RawContentBase):
-    id: int
-
-    class Config:
-        orm_mode = True
+import asyncio
+import os
 
 
-# ProcessedContent schemas
+async def save_raw_content(session: AsyncSession, source, title, url, summary, published_date, raw_html):
+    result = await session.execute(select(RawContent).where(RawContent.url == url))
+    existing = result.scalars().first()
 
-class ProcessedContentBase(BaseModel):
-    raw_id: int
-    formatted_content: Optional[str]
-    status: Optional[str] = "PENDING_APPROVAL"
+    if existing:
+        return  # avoid duplicates by URL
 
-class ProcessedContentCreate(ProcessedContentBase):
-    pass
-
-class ProcessedContentResponse(ProcessedContentBase):
-    id: int
-
-    class Config:
-        orm_mode = True
-
-
-# NewsletterIssueHistory schemas
-
-class NewsletterIssueHistoryBase(BaseModel):
-    date_sent: Optional[datetime]
-    content_ids: Optional[List[int]]
-    status: Optional[str] = "SENT"
-
-class NewsletterIssueHistoryCreate(NewsletterIssueHistoryBase):
-    pass
-
-class NewsletterIssueHistoryResponse(NewsletterIssueHistoryBase):
-    id: int
-
-    class Config:
-        orm_mode = True
+    item = RawContent(
+        source=source,
+        title=title,
+        url=url,
+        summary=summary,
+        published_date=published_date,
+        raw_html=raw_html,
+        status="RAW"
+    )
+    session.add(item)
+    await session.commit()
 
 
-# Subscriber schemas
-
-class SubscriberBase(BaseModel):
-    email: EmailStr
-    status: Optional[str] = "ACTIVE"
-
-class SubscriberCreate(SubscriberBase):
-    pass
-
-class SubscriberResponse(SubscriberBase):
-    id: int
-
-    class Config:
-        orm_mode = True
+async def fetch_html(session, url):
+    async with session.get(url) as response:
+        return await response.text()
 
 
-# Admin schemas
+async def scrape_html(session: AsyncSession, source_name, url):
+    async with aiohttp.ClientSession() as client:
+        html = await fetch_html(client, url)
+        soup = BeautifulSoup(html, "html5lib")
 
-class AdminBase(BaseModel):
-    name: str
-    email: EmailStr
+        # Very basic title/link grabber — customize this per site
+        articles = soup.find_all("a")
+        for a in articles:
+            title = a.get_text(strip=True)
+            link = a.get("href")
 
-class AdminCreate(AdminBase):
-    password: str  # plain password on input
+            if not title or not link or not link.startswith("http"):
+                continue
 
-class AdminResponse(AdminBase):
-    id: int
+            await save_raw_content(session, source_name, title, link, "", None, str(a))
 
-    class Config:
-        orm_mode = True
+
+async def scrape_rss(session: AsyncSession, source_name, url):
+    feed = feedparser.parse(url)
+    for entry in feed.entries:
+        title = entry.get("title", "")
+        link = entry.get("link", "")
+        summary = entry.get("summary", "")
+        published = entry.get("published", "")
+        published_dt = None
+
+        try:
+            published_dt = datetime(*entry.published_parsed[:6])
+        except:
+            pass
+
+        await save_raw_content(session, source_name, title, link, summary, published_dt, str(entry))
+
+
+async def run_scraper():
+    with open("scraper/feeds.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+    async with SessionLocal() as session:
+        for source in config["sources"]:
+            name = source["name"]
+            url = source["url"]
+            typ = source["type"]
+
+            try:
+                if typ == "rss":
+                    await scrape_rss(session, name, url)
+                elif typ == "html":
+                    await scrape_html(session, name, url)
+            except Exception as e:
+                print(f"Error scraping {name}: {e}")
+
+
+if __name__ == "__main__":
+    asyncio.run(run_scraper())
