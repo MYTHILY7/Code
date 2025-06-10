@@ -1,0 +1,187 @@
+{
+  "Current Trends on AI Technologies": [
+    "https://venturebeat.com/category/ai/feed/",
+    "https://www.analyticsvidhya.com/blog/category/artificial-intelligence/feed/"
+  ],
+  "Learn About New AI Technologies": [
+    "https://towardsdatascience.com/tagged/artificial-intelligence/rss",
+    "https://www.datasciencecentral.com/category/artificial-intelligence/feed/"
+  ],
+  "New Tools and Models on AI": [
+    "https://huggingface.co/blog/rss.xml",
+    "https://openai.com/blog/rss.xml"
+  ],
+  "Use Cases on AI": [
+    "https://builtin.com/artificial-intelligence/feed",
+    "https://www.forbes.com/ai/feed/"
+  ]
+}
+
+
+
+import feedparser
+from newspaper import Article
+from dateutil import parser as date_parser
+from datetime import datetime
+import sqlite3
+import json
+
+def load_sources():
+    with open("sources.json", "r") as f:
+        return json.load(f)
+
+def init_db():
+    conn = sqlite3.connect("newsletter.db")
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS scraped_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            url TEXT UNIQUE,
+            summary TEXT,
+            content TEXT,
+            published_date TEXT,
+            category TEXT,
+            processed TEXT
+        )
+    ''')
+    conn.commit()
+    return conn
+
+def scrape():
+    RSS_FEEDS = load_sources()
+    conn = init_db()
+    cursor = conn.cursor()
+
+    for category, urls in RSS_FEEDS.items():
+        for rss_url in urls:
+            print(f"🔎 Fetching: {rss_url} ({category})")
+            feed = feedparser.parse(rss_url)
+            for entry in feed.entries:
+                url = entry.link
+                published_str = entry.get('published', '') or entry.get('updated', '')
+                try:
+                    published_date = date_parser.parse(published_str).isoformat()
+                except:
+                    published_date = datetime.now().isoformat()
+
+                # Skip if already scraped
+                cursor.execute("SELECT 1 FROM scraped_items WHERE url = ?", (url,))
+                if cursor.fetchone():
+                    continue
+
+                try:
+                    article = Article(url)
+                    article.download()
+                    article.parse()
+                    article.nlp()
+                except:
+                    print(f"⚠️ Failed to process: {url}")
+                    continue
+
+                cursor.execute('''
+                    INSERT INTO scraped_items (title, url, summary, content, published_date, category)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (article.title, url, article.summary, article.text, published_date, category))
+                conn.commit()
+                print(f"✅ Saved: {article.title} [{category}]")
+
+    conn.close()
+
+if __name__ == "__main__":
+    scrape()
+
+
+
+
+import sqlite3
+
+def process():
+    conn = sqlite3.connect("newsletter.db")
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, content FROM scraped_items WHERE processed IS NULL")
+    rows = cursor.fetchall()
+
+    for item_id, content in rows:
+        summary = content.strip()[:500] + "..."  # Simulate LLM
+        cursor.execute("UPDATE scraped_items SET processed = ? WHERE id = ?", (summary, item_id))
+
+    conn.commit()
+    conn.close()
+    print("✅ Processed all unprocessed articles.")
+
+if __name__ == "__main__":
+    process()
+
+
+
+
+
+import sqlite3
+import smtplib
+from email.mime.text import MIMEText
+
+def send_newsletter():
+    conn = sqlite3.connect("newsletter.db")
+    cursor = conn.cursor()
+
+    # Get recent processed content per category
+    cursor.execute('''
+        SELECT category, title, url, processed FROM scraped_items
+        WHERE processed IS NOT NULL
+        ORDER BY published_date DESC
+        LIMIT 20
+    ''')
+    rows = cursor.fetchall()
+    conn.close()
+
+    # Group by category
+    sections = {}
+    for category, title, url, summary in rows:
+        sections.setdefault(category, []).append((title, url, summary))
+
+    # Compose HTML
+    html = "<h1>🧠 Weekly AI Newsletter</h1>"
+    for category, articles in sections.items():
+        html += f"<h2>{category}</h2>"
+        for title, url, summary in articles[:5]:
+            html += f"<p><b>{title}</b><br><a href='{url}'>{url}</a><br>{summary}</p><hr>"
+
+    # Email setup
+    msg = MIMEText(html, "html")
+    msg['Subject'] = "🗞️ Your AI Digest"
+    msg['From'] = "your@email.com"
+    msg['To'] = "subscriber@email.com"
+
+    with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+        smtp.starttls()
+        smtp.login("your@email.com", "your_password")
+        smtp.send_message(msg)
+
+    print("📤 Newsletter sent!")
+
+if __name__ == "__main__":
+    send_newsletter()
+
+
+
+
+
+
+import schedule
+import time
+import os
+
+def run_all():
+    os.system("python scraper.py")
+    os.system("python processor.py")
+    os.system("python emailer.py")
+
+schedule.every().monday.at("09:00").do(run_all)
+schedule.every().thursday.at("09:00").do(run_all)
+
+print("🕒 Scheduler running... Press Ctrl+C to stop.")
+while True:
+    schedule.run_pending()
+    time.sleep(60)
