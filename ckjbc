@@ -1,0 +1,109 @@
+import openai
+from config import AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_DEPLOYMENT_NAME
+
+openai.api_type = "azure"
+openai.api_key = AZURE_OPENAI_API_KEY
+openai.api_base = AZURE_OPENAI_ENDPOINT
+openai.api_version = "2023-05-15"  # Adjust if different
+
+def summarize_text(text):
+    text = text[:3000]
+    try:
+        response = openai.ChatCompletion.create(
+            engine=AZURE_DEPLOYMENT_NAME,
+            messages=[
+                {"role": "system", "content": "You are an expert summarizer. Summarize the text in 3–4 lines, clearly and concisely."},
+                {"role": "user", "content": f"{text}"}
+            ],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"[Summary failed: {e}]"
+
+
+
+
+class IssueHistory(Base):
+    __tablename__ = 'issue_history'
+    id = Column(Integer, primary_key=True)
+    category = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    url = Column(String, nullable=False)
+    summary = Column(Text)
+    sent_at = Column(DateTime, default=datetime.utcnow)
+    published_at = Column(DateTime)
+
+
+
+
+from db_setup import ScrapedArticle, ProcessedArticle, IssueHistory, Session
+
+def send_summary_email():
+    session = Session()
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "📰 Weekly AI Digest"
+    msg["From"] = EMAIL_ADDRESS
+    msg["To"] = ", ".join(RECIPIENTS)
+
+    html = "<h2>📰 Weekly AI Digest</h2>"
+
+    processed_articles = session.query(ProcessedArticle).all()
+
+    for cat in CATEGORY_NAMES:
+        html += f"<h3>{CATEGORY_NAMES[cat]}</h3>"
+        cat_articles = [a for a in processed_articles if a.category == cat]
+        if cat_articles:
+            for art in cat_articles:
+                html += (
+                    f"<p><a href='{art.url}'><strong>{art.title}</strong></a><br>"
+                    f"<small>{art.summary}</small></p>"
+                )
+        else:
+            html += "<p><em>No articles found this week.</em></p>"
+
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as s:
+            s.starttls()
+            s.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            s.sendmail(EMAIL_ADDRESS, RECIPIENTS, msg.as_string())
+        print("✅ Email sent.")
+
+        # Move processed articles to IssueHistory
+        for art in processed_articles:
+            issue = IssueHistory(
+                category=art.category,
+                title=art.title,
+                url=art.url,
+                summary=art.summary,
+                published_at=art.published_at,
+            )
+            session.add(issue)
+            session.delete(art)
+
+        # Clear scraped_articles table
+        session.query(ScrapedArticle).delete()
+
+        session.commit()
+        print("✅ Moved to issue history and cleared old articles.")
+
+    except Exception as e:
+        print(f"❌ Email failed: {e}")
+
+    session.close()
+
+
+
+
+
+from db_setup import IssueHistory
+
+# Inside fetch_articles(category):
+sent_urls = {row.url for row in session.query(IssueHistory.url).all()}
+...
+for url in urls:
+    if url in sent_urls:
+        print(f"⏭️ Already sent before: {url}")
+        continue
