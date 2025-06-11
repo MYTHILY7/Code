@@ -98,12 +98,64 @@ def send_summary_email():
 
 
 
-from db_setup import IssueHistory
+from newspaper import Article
+from datetime import datetime
+from db_setup import ScrapedArticle, IssueHistory, Session
+from config import RSS_URLS
+from llm_utils import summarize_text
 
-# Inside fetch_articles(category):
-sent_urls = {row.url for row in session.query(IssueHistory.url).all()}
-...
-for url in urls:
-    if url in sent_urls:
-        print(f"⏭️ Already sent before: {url}")
-        continue
+def fetch_articles(category):
+    session = Session()
+    new_count = 0
+
+    urls = RSS_URLS.get(category, [])
+    if not urls:
+        print(f"❌ No URLs found for category: {category}")
+        return
+
+    # Get all previously sent article URLs from IssueHistory
+    sent_urls = {row.url for row in session.query(IssueHistory.url).all()}
+
+    for url in urls:
+        if url in sent_urls:
+            print(f"⏭️ Already sent before: {url}")
+            continue
+
+        try:
+            article = Article(url)
+            article.download()
+            article.parse()
+
+            # Skip if already scraped
+            if session.query(ScrapedArticle).filter_by(url=url).first():
+                print(f"⚠️ Already in scraped_articles DB: {url}")
+                continue
+
+            # Extract publish date and summarize content
+            published = article.publish_date or datetime.utcnow()
+            raw_text = article.text.strip()
+            summary = summarize_text(raw_text[:2000]) if raw_text else "No Content"
+
+            new_article = ScrapedArticle(
+                category=category,
+                title=article.title or "No Title",
+                url=url,
+                summary=summary,
+                published_at=published
+            )
+
+            session.add(new_article)
+            new_count += 1
+            print(f"✅ Scraped & summarized: {url}")
+
+        except Exception as e:
+            print(f"❌ Failed to process {url}\nError: {e}")
+
+    session.commit()
+    session.close()
+    print(f"📥 {category}: {new_count} new article(s) scraped.")
+
+# Example usage
+if __name__ == "__main__":
+    fetch_articles("CurrentTrends")
+
