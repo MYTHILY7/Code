@@ -155,6 +155,80 @@ def fetch_articles(category):
     session.close()
     print(f"📥 {category}: {new_count} new article(s) scraped.")
 
+
+
+
+
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+from db_setup import ScrapedArticle, ProcessedArticle, IssueHistory, Session
+from config import EMAIL_HOST, EMAIL_PORT, EMAIL_ADDRESS, EMAIL_PASSWORD, RECIPIENTS
+
+CATEGORY_NAMES = {
+    "CurrentTrends": "🔍 Current Trends",
+    "LearnTechnologies": "📚 Learn Technologies",
+    "NewTools": "🛠️ New Tools",
+    "UseCases": "💡 Use Cases"
+}
+
+def send_summary_email():
+    session = Session()
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "📰 Weekly AI Digest"
+    msg["From"] = EMAIL_ADDRESS
+    msg["To"] = ", ".join(RECIPIENTS)
+
+    html = "<h2>📰 Weekly AI Digest</h2>"
+
+    processed_articles = session.query(ProcessedArticle).all()
+
+    for cat in CATEGORY_NAMES:
+        html += f"<h3>{CATEGORY_NAMES[cat]}</h3>"
+        cat_articles = [a for a in processed_articles if a.category == cat]
+        if cat_articles:
+            for art in cat_articles:
+                html += (
+                    f"<p><a href='{art.url}'><strong>{art.title}</strong></a><br>"
+                    f"<small>{art.summary}</small></p>"
+                )
+        else:
+            html += "<p><em>No articles found this week.</em></p>"
+
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as s:
+            s.starttls()
+            s.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            s.sendmail(EMAIL_ADDRESS, RECIPIENTS, msg.as_string())
+        print("✅ Email sent.")
+
+        # Move processed articles to IssueHistory
+        for art in processed_articles:
+            issue = IssueHistory(
+                category=art.category,
+                title=art.title,
+                url=art.url,
+                summary=art.summary,
+                published_at=art.published_at,
+            )
+            session.add(issue)
+            session.delete(art)
+
+        # Clear scraped_articles table
+        session.query(ScrapedArticle).delete()
+
+        session.commit()
+        print("✅ Moved to issue history and cleared old articles.")
+
+    except Exception as e:
+        print(f"❌ Email failed: {e}")
+
+    session.close()
+
+
 # Example usage
 if __name__ == "__main__":
     fetch_articles("CurrentTrends")
