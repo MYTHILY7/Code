@@ -1,0 +1,23 @@
+from openai import AzureOpenAI
+from config import AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, AZURE_DEPLOYMENT_NAME, AZURE_API_VERSION
+
+client = AzureOpenAI(
+    api_key=AZURE_OPENAI_KEY,
+    api_version=AZURE_API_VERSION,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+)
+
+def summarize_text(text):
+    text = text[:3000]
+    try:
+        response = client.chat.completions.create(
+            model=AZURE_DEPLOYMENT_NAME,  # ✅ this is the deployment name, not model name
+            messages=[
+                {"role": "system", "content": "You are an expert summarizer. Summarize the following text in 3–4 lines."},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"[Summary failed: {e}]"
